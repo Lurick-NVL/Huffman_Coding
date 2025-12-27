@@ -1,4 +1,4 @@
-# Huffman_Coding Ngô Lực // Khoa CNTT // Mạng Máy Tính & Truyền Thông
+# Huffman_Coding NgôLực // Khoa CNTT // Mạng Máy Tính & Truyền Thông
 📋 Yêu cầu hệ thống
 Python 3.x đã được cài đặt
 
