@@ -1,6 +1,6 @@
 # Huffman_Coding Ngô Lực // Khoa CNTT // Mạng Máy Tính & Truyền Thông
 📋 Yêu cầu hệ thống
-Python 3.x đã được cài đặt
+Python 3.x đã được cài đặt /n
 Thư viện tkinter(thường đã có sẵn khi cài đặt Python)
 🚀 Cách chạy chương trình
 Bước 1: Sao chép hoặc tải kho lưu trữ về máy
