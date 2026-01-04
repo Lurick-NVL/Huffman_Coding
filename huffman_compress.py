@@ -1,43 +1,25 @@
-
-# Tách từ huffman_core_stable.py: phần nén (HF2 / HFZ).
-
 import heapq
 import mmap
 import os
 import tempfile
 from collections import Counter
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional, Tuple
-
-# Stable, deterministic Huffman codec optimized for large UTF-8 text.
-# - Streaming encode/decode (low RAM)
-# - Varint frequencies (smaller header)
-# - Deterministic tree tie-breaking (decode always matches encode)
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 MAGIC = b"HF2"
 VERSION = 1
-
-# LZ77 + Huffman-bytes container
-MAGIC_LZ = b"HFZ"  # Huffman + LZ77 token stream
+MAGIC_LZ = b"HFZ"
 VERSION_LZ = 1
-
-# LZ77 token format:
-#   literal: 0x00 <byte>
-#   match:   0x01 <varint distance> <varint length>
 LZ_T_LITERAL = 0
 LZ_T_MATCH = 1
-
 LZ_WINDOW = 32768
 LZ_MIN_MATCH = 4
 LZ_MAX_MATCH = 258
 LZ_HASH_LEN = 3
 LZ_MAX_CANDIDATES = 64
-
-# I/O tuning
 READ_CHUNK_SIZE = 262_144
 WRITE_BYTES_FLUSH = 1_048_576
 
-# Type alias
 ProgressCallback = Optional[Callable[[int, int], None]]
 
 
@@ -56,8 +38,6 @@ def _encode_varint(n: int) -> bytes:
             break
     return bytes(out)
 
-
-# Encode unsigned 16-bit big-endian.
 def _u16be(n: int) -> bytes:
     return n.to_bytes(2, "big")
 
@@ -171,7 +151,7 @@ def _build_bcodes(root: Optional[_BNode]) -> Dict[int, str]:
     return codes
 
 
-# Nén Huffman thuần (HF2) cho file văn bản UTF-8.
+# Nén Huffman thuần cho file văn bản. tạo bảng tần suất và ghi file nén
 def compress_to_file(
     input_path: str,
     output_path: str,
@@ -247,10 +227,6 @@ def compress_to_file(
 
 
 # Mã hóa LZ77 cho bytes trong file -> ghi ra stream token.
-# Token format:
-#   literal: 0x00 <byte>
-#   match:   0x01 <varint distance> <varint length>
-# Returns number of token bytes written.
 def _lz77_encode_to_stream(
     src_path: str,
     token_out,
@@ -398,7 +374,6 @@ def _lz77_encode_to_stream(
             mm.close()
 
 
-# Ghi bitstream Huffman ra file (buffer nội bộ bằng int).
 class _BitWriter:
 
     # Khởi tạo writer cho bitstream Huffman, ghi ra file-like object.
@@ -448,7 +423,6 @@ class _BitWriter:
 
 
 # Nén file token bytes bằng Huffman-over-bytes, ghi thẳng ra out_f.
-# Trả về padding bits (0..7).
 def _compress_token_file_huffman_bytes(
     token_path: str,
     out_f,
@@ -488,14 +462,9 @@ def _compress_token_file_huffman_bytes(
 compress_pure_huffman = compress_to_file
 
 
-# Nén theo pipeline LZ77 + Huffman-over-bytes.
-# Nếu LZ77 không mang lại lợi ích (token phình), tự fallback về HF2.
-def compress_huffman_lz77(
-    input_path: str,
-    output_path: str,
-    progress_callback: ProgressCallback = None,
-    *,
-    fast: bool = False,
+# Nén theo  LZ77 + Huffman
+def compress_huffman_lz77(input_path: str, output_path: str, progress_callback: ProgressCallback = None, *,
+fast: bool = False,
 ) -> Tuple[Dict[str, int], Dict[str, str]]:
     src_size = os.path.getsize(input_path)
 
@@ -535,6 +504,9 @@ def compress_huffman_lz77(
 
         freq_b = {i: c for i, c in enumerate(freq_arr) if c}
 
+        root_b = _build_btree(freq_b)
+        codes_b: Dict[int, str] = _build_bcodes(root_b) if root_b is not None else {}
+
         with open(output_path, "wb+") as out:
             out.write(MAGIC_LZ)
             out.write(VERSION_LZ.to_bytes(1, "big"))
@@ -571,9 +543,197 @@ def compress_huffman_lz77(
 
         if progress_callback:
             progress_callback(src_size * 2, src_size * 2)
-        return {}, {}
+        return freq_b, codes_b
     finally:
         try:
             os.remove(tmp_path)
         except OSError:
             pass
+
+
+def _sym_to_label(sym: str) -> str:
+    if sym == "\n":
+        return "\\n"
+    if sym == "\r":
+        return "\\r"
+    if sym == "\t":
+        return "\\t"
+    if sym == " ":
+        return "<space>"
+    if len(sym) == 1 and (sym.isprintable() or sym.isalnum()):
+        return sym
+    esc = sym.encode("unicode_escape").decode("ascii")
+    return esc
+
+
+def _byte_to_label(b: int) -> str:
+    return f"0x{b:02X}"
+
+
+def export_huffman_tree_pdf(freq_table: Dict, pdf_path: str, *,
+    codes: Optional[Dict] = None,
+    title: Optional[str] = None,
+) -> None:
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as e:  
+        raise RuntimeError(
+            "Không thể export PDF vì thiếu matplotlib. Hãy cài: pip install matplotlib"
+        ) from e
+
+    if not freq_table:
+        raise ValueError("freq_table rỗng")
+
+    first_key = next(iter(freq_table.keys()))
+    is_byte_tree = isinstance(first_key, int)
+    if is_byte_tree:
+        root = _build_btree(freq_table)
+        if root is None:
+            raise ValueError("Invalid tree")
+        if codes is None:
+            codes = _build_bcodes(root)
+    else:
+        root = _build_tree(freq_table)
+        if root is None:
+            raise ValueError("Invalid tree")
+        if codes is None:
+            codes = _build_codes(root)
+
+    positions: Dict[int, Tuple[float, float]] = {}
+    nodes: Dict[int, Any] = {}
+    edges: List[Tuple[int, int, str]] = []
+    leaf_count = 0
+    max_depth = 0
+    x_cursor = 0
+
+    def walk(node, depth: int) -> float:
+        nonlocal leaf_count, max_depth, x_cursor
+        if depth > max_depth:
+            max_depth = depth
+        node_id = id(node)
+        nodes[node_id] = node
+
+        children = []
+        if getattr(node, "left") is not None:
+            child = getattr(node, "left")
+            edges.append((node_id, id(child), "0"))
+            children.append(walk(child, depth + 1))
+        if getattr(node, "right") is not None:
+            child = getattr(node, "right")
+            edges.append((node_id, id(child), "1"))
+            children.append(walk(child, depth + 1))
+
+        if not children:
+            x = float(x_cursor)
+            x_cursor += 1
+            leaf_count += 1
+        else:
+            x = sum(children) / len(children)
+
+        positions[node_id] = (x, float(-depth))
+        return x
+
+    walk(root, 0)
+
+    leaf_nodes = [
+        n for n in nodes.values() if getattr(n, "sym") is not None
+    ]
+    hide_codes = len(leaf_nodes) > 80
+
+    max_code_chars = 28
+
+    def _short_code(code: str) -> str:
+        if len(code) <= max_code_chars:
+            return code
+        return code[: max_code_chars - 1] + "…"
+
+    def node_label(node) -> str:
+        sym = getattr(node, "sym")
+        freq = getattr(node, "freq")
+        if sym is None:
+            return str(freq)
+        if is_byte_tree:
+            sym_label = _byte_to_label(int(sym))
+            if hide_codes:
+                return f"{sym_label}\n{freq}".strip()
+            code = _short_code(codes.get(sym, "")) if codes else ""
+            return f"{sym_label}\n{freq}\n{code}".strip()
+        sym_label = _sym_to_label(str(sym))
+        if hide_codes:
+            return f"{sym_label}\n{freq}".strip()
+        code = _short_code(codes.get(sym, "")) if codes else ""
+        return f"{sym_label}\n{freq}\n{code}".strip()
+
+    labels: Dict[int, str] = {nid: node_label(nobj) for nid, nobj in nodes.items()}
+    max_line_len = 1
+    for _lab in labels.values():
+        for _line in _lab.splitlines() or [""]:
+            if len(_line) > max_line_len:
+                max_line_len = len(_line)
+
+    x_step = 1.4 + max(0.0, (max_line_len - 8) * 0.09)
+    x_step *= 1.0 + min(0.9, max(0.0, (leaf_count - 12) / 120.0))
+    if x_step > 5.0:
+        x_step = 5.0
+    y_step = 1.45
+
+    scaled_positions: Dict[int, Tuple[float, float]] = {}
+    xs = []
+    ys = []
+    for nid, (x, y) in positions.items():
+        sx = x * x_step
+        sy = y * y_step
+        scaled_positions[nid] = (sx, sy)
+        xs.append(sx)
+        ys.append(sy)
+
+    if leaf_count <= 25:
+        font_size = 10
+    elif leaf_count <= 60:
+        font_size = 8
+    else:
+        font_size = 7
+
+    width = max(14.0, min(140.0, (leaf_count if leaf_count else 1) * 0.55 * x_step))
+    height = max(7.0, min(110.0, (max_depth + 1) * 1.25 * y_step))
+
+    fig, ax = plt.subplots(figsize=(width, height))
+    ax.axis("off")
+
+    for p_id, c_id, bit in edges:
+        x1, y1 = scaled_positions[p_id]
+        x2, y2 = scaled_positions[c_id]
+        ax.plot([x1, x2], [y1, y2], color="#64748b", linewidth=1)
+        mx = (x1 + x2) / 2
+        my = (y1 + y2) / 2
+        ax.text(mx, my, bit, fontsize=max(7, font_size - 1), color="#334155", ha="center", va="center")
+
+    for node_id, (x, y) in scaled_positions.items():
+        node_obj = nodes.get(node_id)
+        if node_obj is None:
+            continue
+
+        ax.text(
+            x,
+            y,
+            labels.get(node_id, ""),
+            fontsize=font_size,
+            ha="center",
+            va="center",
+            bbox=dict(boxstyle="round,pad=0.35", fc="#ffffff", ec="#94a3b8"),
+        )
+
+    if title:
+        ax.set_title(title)
+
+    if xs and ys:
+        pad_x = max(1.5, x_step * 1.2)
+        pad_y = max(1.5, y_step * 1.2)
+        ax.set_xlim(min(xs) - pad_x, max(xs) + pad_x)
+        ax.set_ylim(min(ys) - pad_y, max(ys) + pad_y)
+
+    fig.savefig(pdf_path, format="pdf", bbox_inches="tight", pad_inches=0.5)
+    plt.close(fig)
