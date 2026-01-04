@@ -1,32 +1,21 @@
-
-# Tách từ huffman_core_stable.py: phần giải nén (HF2 / HFZ / legacy).
-
 import heapq
 import os
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional, Tuple
 
-# File formats
 MAGIC = b"HF2"
 MAGIC_LZ = b"HFZ"
 
-# LZ77 token format
 LZ_T_LITERAL = 0
 LZ_T_MATCH = 1
-
 LZ_WINDOW = 32768
 LZ_MIN_MATCH = 4
 LZ_MAX_MATCH = 258
-
-# I/O tuning (must match encoder for good perf)
 READ_CHUNK_SIZE = 262_144
 WRITE_CHARS_FLUSH = 200_000
-
 DECODE_TABLE_BITS = 12
 
-# Type alias
 ProgressCallback = Optional[Callable[[int, int], None]]
-
 
 # Giải mã varint trực tiếp từ file/stream.
 def _decode_varint_from_stream(f) -> int:
@@ -43,7 +32,6 @@ def _decode_varint_from_stream(f) -> int:
         shift += 7
         if shift > 63:
             raise ValueError("Invalid varint (too long)")
-
 
 # Đọc đúng n bytes, thiếu thì raise.
 def _read_exact(f, n: int) -> bytes:
@@ -110,8 +98,7 @@ class _BitReader:
         else:
             self.bit_buf = 0
 
-
-# Tạo bảng tra nhanh Huffman để decode theo prefix (dùng để tăng tốc giải nén).
+# Tạo bảng tra nhanh Huffman để decode theo prefix (để tăng tốc giải nén).
 def _make_decode_table(root, table_bits: int):
     size = 1 << table_bits
     table = [None] * size
@@ -229,8 +216,6 @@ def _build_btree(freq_table: Dict[int, int]) -> Optional[_BNode]:
 
     return heap[0][3]
 
-
-# Đọc header HFZ, trả về (orig_len, freq_b, padding).
 def _read_hfz_header(f) -> Tuple[int, Dict[int, int], int]:
     ver_b = f.read(1)
     if len(ver_b) != 1:
@@ -256,7 +241,6 @@ def _read_hfz_header(f) -> Tuple[int, Dict[int, int], int]:
     return orig_len, freq_b, padding
 
 
-# Giải mã LZ77 token bytes theo luồng, ghi ra output bytes.
 class _LZ77StreamDecoder:
     # Khởi tạo bộ giải mã LZ77 theo luồng, dùng cửa sổ trượt LZ_WINDOW.
     def __init__(self, out_file) -> None:
@@ -349,14 +333,7 @@ class _LZ77StreamDecoder:
         self._flush()
         return self.produced
 
-
-# Giải nén payload HFZ: Huffman-over-bytes -> token LZ77 -> bytes output.
-def _decompress_hfz(
-    f,
-    file_size: int,
-    output_path: str,
-    progress_callback: ProgressCallback,
-) -> None:
+def _decompress_hfz(f, file_size: int, output_path: str, progress_callback: ProgressCallback,) -> None:
     
     orig_len, freq_b, padding = _read_hfz_header(f)
     total_tokens = sum(freq_b.values())
@@ -432,8 +409,6 @@ def _decompress_hfz(
     if progress_callback:
         progress_callback(total_tokens, total_tokens)
 
-
-# Đọc header HF2 (đã đọc magic), trả về freq_table.
 def _read_hf2_freq_table(f) -> Dict[str, int]:
     ver_b = f.read(1)
     if len(ver_b) != 1:
@@ -481,8 +456,7 @@ def _read_legacy_freq_table(f) -> Dict[str, int]:
         freq_table[ch] = int.from_bytes(fb, "big")
     return freq_table
 
-
-# Giải mã payload Huffman text (HF2/legacy) và ghi ra output_path.
+# Giải mã payload Huffman text  và ghi ra output_path.
 def _decode_huffman_text_payload(
     f,
     file_size: int,
@@ -568,7 +542,7 @@ def _decode_huffman_text_payload(
     return _build_codes(root)
 
 
-# Giải nén định dạng HF2 (Huffman text) theo header HF2.
+# Giải nén định dạng (Huffman text) theo header .
 def _decompress_hf2(
     f,
     file_size: int,
@@ -581,8 +555,6 @@ def _decompress_hf2(
     )
     return freq_table, codes
 
-
-# Giải nén định dạng legacy (không magic), dùng header cũ.
 def _decompress_legacy(
     f,
     file_size: int,
@@ -597,7 +569,7 @@ def _decompress_legacy(
     return freq_table, codes
 
 
-# API giải nén chính: tự nhận dạng định dạng (HFZ / HF2 / legacy) và ghi ra output.
+# API giải nén chính: tự nhận dạng định dạng và ghi ra output.
 def decompress_from_file(
     input_path: str,
     output_path: str,
