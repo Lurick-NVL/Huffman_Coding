@@ -1,13 +1,17 @@
+import hashlib
 import os
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from huffman_compress import compress_huffman_lz77, compress_pure_huffman, compress_to_file
+from huffman_compress import (
+    compress_pure_huffman,
+    compress_to_file,
+    compress_huffman_lz77,
+    export_huffman_tree_pdf,
+)
 from huffman_decompress import decompress_from_file
 
-
-# Format bytes as a human-friendly string.
 def _format_bytes(n: int) -> str:
     if n < 0:
         return "Không xác định"
@@ -17,9 +21,50 @@ def _format_bytes(n: int) -> str:
     while v >= 1024 and i < len(units) - 1:
         v /= 1024
         i += 1
+
     if i == 0:
         return f"{int(v)} {units[i]}"
     return f"{v:.2f} {units[i]}"
+
+
+def _sha256_file(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _files_equal(a: str, b: str) -> bool:
+    try:
+        if os.path.getsize(a) != os.path.getsize(b):
+            return False
+    except OSError:
+        return False
+
+    with open(a, "rb") as fa, open(b, "rb") as fb:
+        while True:
+            ca = fa.read(1024 * 1024)
+            cb = fb.read(1024 * 1024)
+            if ca != cb:
+                return False
+            if not ca:
+                return True
+
+
+def _suggest_tree_pdf_path(compressed_path: str) -> str:
+    base, _ext = os.path.splitext(compressed_path)
+    candidate = base + "_huffman_tree.pdf"
+    if not os.path.exists(candidate):
+        return candidate
+    i = 1
+    while True:
+        alt = f"{base}_huffman_tree_{i}.pdf"
+        if not os.path.exists(alt):
+            return alt
+        i += 1
 
     
 class HuffmanApp(tk.Tk):
@@ -27,7 +72,7 @@ class HuffmanApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("Huffman Coding – Nén & Giải nén")
-        self.geometry("900x620")
+        self.geometry("900x650")
         self.minsize(820, 520)
         self._center_window()
 
@@ -42,7 +87,7 @@ class HuffmanApp(tk.Tk):
         style = ttk.Style()
         try:
             style.theme_use("clam")
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
 
         style.configure(".", font=("Segoe UI", 10))
@@ -166,6 +211,7 @@ class HuffmanApp(tk.Tk):
 
         self.compress_input_var = tk.StringVar()
         self.compress_output_var = tk.StringVar()
+        self.export_tree_pdf_var = tk.BooleanVar(value=True)
 
         self.compress_input_var.trace_add("write", self._on_compress_input_changed)
 
@@ -191,7 +237,7 @@ class HuffmanApp(tk.Tk):
 
         self._build_ui()
 
-    # Chuẩn hoá đường dẫn để so sánh (case-insensitive, absolute).
+    # Chuẩn hoá đường dẫn để so sánh
     def _norm_path(self, path: str) -> str:
         return os.path.normcase(os.path.abspath(path))
 
@@ -313,6 +359,13 @@ class HuffmanApp(tk.Tk):
 
         button_frame = ttk.Frame(frm_compress)
         button_frame.grid(row=2, column=0, columnspan=3, pady=(5, 0))
+
+        export_chk = ttk.Checkbutton(
+            button_frame,
+            text="Huffman Tree File (PDF)",
+            variable=self.export_tree_pdf_var,
+        )
+        export_chk.pack(side=tk.LEFT, padx=(0, 14))
         
         self.compress_button = ttk.Button(
             button_frame,
@@ -397,6 +450,15 @@ class HuffmanApp(tk.Tk):
         )
         self.decompress_button.grid(row=2, column=0, columnspan=3, pady=(5, 0))
 
+        compare_button = ttk.Button(
+            frm_decompress,
+            text="So sánh với file gốc",
+            command=self.handle_compare_with_original,
+            width=20,
+            style="Ghost.TButton",
+        )
+        compare_button.grid(row=3, column=0, columnspan=3, pady=(10, 0))
+
         dec_stats = ttk.LabelFrame(tab_decompress, text="Thông tin kết quả giải nén", padding=15, style="Card.TLabelframe")
         dec_stats.pack(fill=tk.X, padx=10, pady=(0, 10))
 
@@ -442,7 +504,6 @@ class HuffmanApp(tk.Tk):
         )
         status_label.pack(fill=tk.X, side=tk.TOP)
 
-    # === Các hàm chọn file cho NÉN ===
     # Chọn file nguồn để nén (.txt).
     def browse_compress_input(self) -> None:
         path = filedialog.askopenfilename(
@@ -495,7 +556,6 @@ class HuffmanApp(tk.Tk):
         return os.path.join(src_dir, out_name) if src_dir else out_name
 
     # Cập nhật tên file nén đích khi đổi file nguồn.
-    # Ghi đè nếu người dùng đang để trống hoặc đang dùng gợi ý cũ.
     def _update_compress_output_suggestion(self, prev_suggest: str) -> None:
         new_suggest = self.suggest_compress_output_path()
         current_out = self.compress_output_var.get()
@@ -503,7 +563,6 @@ class HuffmanApp(tk.Tk):
             self.compress_output_var.set(new_suggest)
         self._last_compress_suggest = new_suggest
 
-    # === Các hàm chọn file cho GIẢI NÉN ===
     # Chọn file nén nguồn để giải nén (.huff).
     def browse_decompress_input(self) -> None:
         path = filedialog.askopenfilename(
@@ -542,7 +601,7 @@ class HuffmanApp(tk.Tk):
             out_name = base + ".txt"
         return os.path.join(src_dir, out_name) if src_dir else out_name
 
-    # Cập nhật tên file giải nén đích khi đổi file nguồn (nếu đang dùng gợi ý).
+    # Cập nhật tên file giải nén đích khi đổi file nguồn
     def _update_decompress_output_suggestion(self, prev_suggest: str) -> None:
         new_suggest = self.suggest_decompress_output_path()
         current_out = self.decompress_output_var.get()
@@ -550,8 +609,7 @@ class HuffmanApp(tk.Tk):
             self.decompress_output_var.set(new_suggest)
         self._last_decompress_suggest = new_suggest
 
-    # ==== Quản lý trạng thái / tiến trình (cho cả nén và giải nén) ====
-    # Bật/tắt trạng thái bận, khóa nút và chạy/ dừng progressbar.
+    #  Quản lý trạng thái / tiến trình chung của ứng dụng.
     def set_busy(self, busy: bool, message: str = "") -> None:
         if message:
             self.status_var.set(message)
@@ -578,85 +636,6 @@ class HuffmanApp(tk.Tk):
             self.progress_percent_var.set("0%")
 
         self.update_idletasks()
-
-    # Nén Huffman (đường code tương thích; gọi compress_to_file).
-    def handle_compress(self) -> None:
-        src = self.compress_input_var.get()
-        dst = self.compress_output_var.get()
-        if not src:
-            messagebox.showwarning("Thiếu file nguồn", "Vui lòng chọn file văn bản cần nén.")
-            return
-        prev_suggest = self._last_compress_suggest
-        new_suggest = self.suggest_compress_output_path()
-        if not dst or dst == prev_suggest:
-            dst = new_suggest
-            self.compress_output_var.set(dst)
-        self._last_compress_suggest = new_suggest
-        if not self._validate_compress_paths(src, dst):
-            return
-        if self.progress is not None:
-            self.progress.config(mode="determinate", maximum=100, value=0)
-        self.set_busy(True, "Đang nén file, vui lòng chờ 0%...")
-
-        def worker() -> None:
-            try:
-                def progress_cb(done: int, total: int) -> None:
-                    if total <= 0:
-                        return
-                    percent = int(done * 100 / total)
-                    if percent > 100:
-                        percent = 100
-
-                    def ui_update() -> None:
-                        if self.progress is not None:
-                            self.progress["value"] = percent
-                        self.progress_percent_var.set(f"{percent}%")
-                        self.status_var.set(f"Đang nén file, vui lòng chờ {percent}%...")
-
-                    self.after(0, ui_update)
-
-                compress_to_file(src, dst, progress_callback=progress_cb)
-                try:
-                    original_size = os.path.getsize(src)
-                except OSError:
-                    original_size = -1
-                try:
-                    compressed_size = os.path.getsize(dst)
-                except OSError:
-                    compressed_size = -1
-
-                def on_done() -> None:
-                    self.stat_file_var.set(src)
-                    self.stat_original_var.set(
-                        _format_bytes(original_size)
-                    )
-                    self.stat_compressed_var.set(
-                        _format_bytes(compressed_size)
-                    )
-                    if original_size > 0 and compressed_size >= 0:
-                        ratio = (1 - compressed_size / original_size) * 100
-                        self.stat_ratio_var.set(f"{ratio:.2f}% dung lượng giảm")
-                    else:
-                        self.stat_ratio_var.set("Không xác định")
-                    if self.progress is not None:
-                        self.progress["value"] = 100
-                    self.progress_percent_var.set("100%")
-                    self.set_busy(False, "Nén xong.")
-                    messagebox.showinfo(
-                        "Thành công",
-                        f"Đã nén file:\n{src}\n=>\n{dst}",
-                    )
-
-                self.after(0, on_done)
-            except Exception as e:  # pylint: disable=broad-except
-
-                def on_error() -> None:
-                    self.set_busy(False, "Lỗi khi nén.")
-                    messagebox.showerror("Lỗi nén", str(e))
-
-                self.after(0, on_error)
-
-        threading.Thread(target=worker, daemon=True).start()
 
     # Xử lý nén Huffman thuần.
     def handle_compress_pure(self) -> None:
@@ -694,7 +673,28 @@ class HuffmanApp(tk.Tk):
 
                     self.after(0, ui_update)
 
-                compress_pure_huffman(src, dst, progress_callback=progress_cb)
+                freq_table, codes = compress_pure_huffman(src, dst, progress_callback=progress_cb)
+
+                pdf_path = ""
+                if self.export_tree_pdf_var.get():
+                    pdf_path = _suggest_tree_pdf_path(dst)
+                    try:
+                        export_huffman_tree_pdf(
+                            freq_table,
+                            pdf_path,
+                            codes=codes,
+                            title=f"Huffman tree: {os.path.basename(src)}",
+                        )
+                    except Exception as e: 
+                        pdf_path = ""
+
+                        def warn_pdf() -> None:
+                            messagebox.showwarning(
+                                "Cảnh báo",
+                                "Nén thành công nhưng không xuất được cây Huffman ra PDF.\n" + str(e),
+                            )
+
+                        self.after(0, warn_pdf)
                 try:
                     original_size = os.path.getsize(src)
                 except OSError:
@@ -721,13 +721,114 @@ class HuffmanApp(tk.Tk):
                         self.progress["value"] = 100
                     self.progress_percent_var.set("100%")
                     self.set_busy(False, "Nén xong.")
+
+                    msg = f"Đã nén file (Huffman thuần):\n{src}\n=>\n{dst}"
+                    if pdf_path:
+                        msg += f"\n\nCây Huffman (PDF):\n{pdf_path}"
                     messagebox.showinfo(
                         "Thành công",
-                        f"Đã nén file (Huffman thuần):\n{src}\n=>\n{dst}",
+                        msg,
                     )
 
                 self.after(0, on_done)
-            except Exception as e:  # pylint: disable=broad-except
+            except Exception as e:
+
+                def on_error() -> None:
+                    self.set_busy(False, "Lỗi khi nén.")
+                    messagebox.showerror("Lỗi nén", str(e))
+
+                self.after(0, on_error)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def handle_compress(self) -> None:
+        src = self.compress_input_var.get()
+        dst = self.compress_output_var.get()
+        if not src:
+            messagebox.showwarning("Thiếu file nguồn", "Vui lòng chọn file văn bản cần nén.")
+            return
+        prev_suggest = self._last_compress_suggest
+        new_suggest = self.suggest_compress_output_path()
+        if not dst or dst == prev_suggest:
+            dst = new_suggest
+            self.compress_output_var.set(dst)
+        self._last_compress_suggest = new_suggest
+        if not self._validate_compress_paths(src, dst):
+            return
+        if self.progress is not None:
+            self.progress.config(mode="determinate", maximum=100, value=0)
+        self.set_busy(True, "Đang nén file, vui lòng chờ 0%...")
+
+        def worker() -> None:
+            try:
+                def progress_cb(done: int, total: int) -> None:
+                    if total <= 0:
+                        return
+                    percent = int(done * 100 / total)
+                    if percent > 100:
+                        percent = 100
+
+                    def ui_update() -> None:
+                        if self.progress is not None:
+                            self.progress["value"] = percent
+                        self.progress_percent_var.set(f"{percent}%")
+                        self.status_var.set(f"Đang nén file, vui lòng chờ {percent}%...")
+
+                    self.after(0, ui_update)
+
+                freq_table, codes = compress_to_file(src, dst, progress_callback=progress_cb)
+
+                pdf_path = ""
+                if self.export_tree_pdf_var.get():
+                    pdf_path = _suggest_tree_pdf_path(dst)
+                    try:
+                        export_huffman_tree_pdf(
+                            freq_table,
+                            pdf_path,
+                            codes=codes,
+                            title=f"Huffman tree: {os.path.basename(src)}",
+                        )
+                    except Exception as e:  
+                        pdf_path = ""
+
+                        def warn_pdf() -> None:
+                            messagebox.showwarning(
+                                "Cảnh báo",
+                                "Nén thành công nhưng không xuất được cây Huffman ra PDF.\n" + str(e),
+                            )
+
+                        self.after(0, warn_pdf)
+
+                try:
+                    original_size = os.path.getsize(src)
+                except OSError:
+                    original_size = -1
+                try:
+                    compressed_size = os.path.getsize(dst)
+                except OSError:
+                    compressed_size = -1
+
+                def on_done() -> None:
+                    self.stat_file_var.set(src)
+                    self.stat_original_var.set(_format_bytes(original_size))
+                    self.stat_compressed_var.set(_format_bytes(compressed_size))
+                    if original_size > 0 and compressed_size >= 0:
+                        ratio = (1 - compressed_size / original_size) * 100
+                        self.stat_ratio_var.set(f"{ratio:.2f}% dung lượng giảm")
+                    else:
+                        self.stat_ratio_var.set("Không xác định")
+                    if self.progress is not None:
+                        self.progress["value"] = 100
+                    self.progress_percent_var.set("100%")
+                    self.set_busy(False, "Nén xong.")
+
+                    msg = f"Đã nén file:\n{src}\n=>\n{dst}"
+                    if pdf_path:
+                        msg += f"\n\nCây Huffman (PDF):\n{pdf_path}"
+                    messagebox.showinfo("Thành công", msg)
+
+                self.after(0, on_done)
+            except Exception as e:  
 
                 def on_error() -> None:
                     self.set_busy(False, "Lỗi khi nén.")
@@ -773,12 +874,33 @@ class HuffmanApp(tk.Tk):
 
                     self.after(0, ui_update)
 
-                compress_huffman_lz77(
+                freq_table, codes = compress_huffman_lz77(
                     src,
                     dst,
                     progress_callback=progress_cb,
                     fast=True,
                 )
+
+                pdf_path = ""
+                if self.export_tree_pdf_var.get() and freq_table:
+                    pdf_path = _suggest_tree_pdf_path(dst)
+                    try:
+                        export_huffman_tree_pdf(
+                            freq_table,
+                            pdf_path,
+                            codes=codes,
+                            title=f"Huffman tree (LZ77+Huffman-bytes): {os.path.basename(src)}",
+                        )
+                    except Exception as e:
+                        pdf_path = ""
+
+                        def warn_pdf() -> None:
+                            messagebox.showwarning(
+                                "Cảnh báo",
+                                "Nén thành công nhưng không xuất được cây Huffman ra PDF.\n" + str(e),
+                            )
+
+                        self.after(0, warn_pdf)
                 try:
                     original_size = os.path.getsize(src)
                 except OSError:
@@ -805,13 +927,13 @@ class HuffmanApp(tk.Tk):
                         self.progress["value"] = 100
                     self.progress_percent_var.set("100%")
                     self.set_busy(False, "Nén xong.")
-                    messagebox.showinfo(
-                        "Thành công",
-                        f"Đã nén file (Huffman + LZ77):\n{src}\n=>\n{dst}",
-                    )
+                    msg = f"Đã nén file (Huffman + LZ77):\n{src}\n=>\n{dst}"
+                    if pdf_path:
+                        msg += f"\n\nCây Huffman (PDF):\n{pdf_path}"
+                    messagebox.showinfo("Thành công", msg)
 
                 self.after(0, on_done)
-            except Exception as e:  # pylint: disable=broad-except
+            except Exception as e:
 
                 def on_error() -> None:
                     self.set_busy(False, "Lỗi khi nén.")
@@ -821,7 +943,7 @@ class HuffmanApp(tk.Tk):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    # Giải nén file .huff ra .txt (HF2/HFZ/legacy).
+    # Giải nén file .huff ra .txt 
     def handle_decompress(self) -> None:
         src = self.decompress_input_var.get()
         dst = self.decompress_output_var.get()
@@ -888,6 +1010,48 @@ class HuffmanApp(tk.Tk):
                 self.after(0, on_error)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def handle_compare_with_original(self) -> None:
+        decompressed = self.decompress_output_var.get()
+        if not decompressed:
+            messagebox.showwarning("Thiếu file", "Chưa có file giải nén để so sánh.")
+            return
+        if not os.path.exists(decompressed):
+            messagebox.showwarning("Thiếu file", "File giải nén không tồn tại.")
+            return
+
+        original = filedialog.askopenfilename(
+            title="Chọn file gốc để so sánh",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+        )
+        if not original:
+            return
+        if not os.path.exists(original):
+            messagebox.showwarning("Thiếu file", "File gốc không tồn tại.")
+            return
+
+        try:
+            equal = _files_equal(original, decompressed)
+            osz = os.path.getsize(original)
+            dsz = os.path.getsize(decompressed)
+            oh = _sha256_file(original)
+            dh = _sha256_file(decompressed)
+        except Exception as e:
+            messagebox.showerror("Lỗi", "Không thể so sánh file.\n" + str(e))
+            return
+
+        msg = (
+            f"File gốc:\n{original}\n\n"
+            f"File giải nén:\n{decompressed}\n\n"
+            f"Kích thước (gốc / giải nén): {osz} / {dsz} bytes\n"
+            f"SHA-256 (gốc): {oh}\n"
+            f"SHA-256 (giải nén): {dh}\n"
+        )
+
+        if equal:
+            messagebox.showinfo("Kết quả so sánh", "HAI FILE GIỐNG NHAU (100%).\n\n" + msg)
+        else:
+            messagebox.showwarning("Kết quả so sánh", "HAI FILE KHÁC NHAU.\n\n" + msg)
 if __name__ == "__main__":
     app = HuffmanApp()
     app.mainloop()
