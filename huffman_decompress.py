@@ -242,7 +242,7 @@ def _read_hfz_header(f) -> Tuple[int, Dict[int, int], int]:
 
 
 class _LZ77StreamDecoder:
-    # Khởi tạo bộ giải mã LZ77 theo luồng, dùng cửa sổ trượt LZ_WINDOW.
+    # Khởi tạo bộ giải mã LZ77 theo luồng
     def __init__(self, out_file) -> None:
         self.out_file = out_file
         self.win = bytearray(LZ_WINDOW)
@@ -476,7 +476,7 @@ def _decode_huffman_text_payload(
 
     total_chars = sum(freq_table.values())
     if total_chars == 0:
-        with open(output_path, "w", encoding="utf-8") as out:
+        with open(output_path, "w", encoding="utf-8", newline="") as out:
             out.write("")
         return {}
 
@@ -490,7 +490,7 @@ def _decode_huffman_text_payload(
     progress_interval = max(1000, total_chars // 200)
     br = _BitReader(f, total_bits)
 
-    with open(output_path, "w", encoding="utf-8") as out:
+    with open(output_path, "w", encoding="utf-8", newline="") as out:
         while decoded < total_chars:
             rem = br.remaining_bits()
             if rem <= 0:
@@ -555,11 +555,7 @@ def _decompress_hf2(
     )
     return freq_table, codes
 
-def _decompress_legacy(
-    f,
-    file_size: int,
-    output_path: str,
-    progress_callback: ProgressCallback,
+def _decompress_legacy(f, file_size: int, output_path: str, progress_callback: ProgressCallback,
 ) -> Tuple[Dict[str, int], Dict[str, str]]:
     f.seek(0)
     freq_table = _read_legacy_freq_table(f)
@@ -570,12 +566,9 @@ def _decompress_legacy(
 
 
 # API giải nén chính: tự nhận dạng định dạng và ghi ra output.
-def decompress_from_file(
-    input_path: str,
-    output_path: str,
-    progress_callback: ProgressCallback = None,
+def decompress_from_file(input_path: str, output_path: str, progress_callback: ProgressCallback = None,
 ) -> Tuple[Dict[str, int], Dict[str, str]]:
-    
+
     file_size = os.path.getsize(input_path)
 
     with open(input_path, "rb") as f:
