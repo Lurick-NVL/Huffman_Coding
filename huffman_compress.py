@@ -152,13 +152,10 @@ def _build_bcodes(root: Optional[_BNode]) -> Dict[int, str]:
 
 
 # Nén Huffman thuần cho file văn bản. tạo bảng tần suất và ghi file nén
-def compress_to_file(
-    input_path: str,
-    output_path: str,
-    progress_callback: ProgressCallback = None,
+def compress_to_file(input_path: str, output_path: str, progress_callback: ProgressCallback = None,
 ) -> Tuple[Dict[str, int], Dict[str, str]]:
     counter = Counter()
-    with open(input_path, "r", encoding="utf-8") as f:
+    with open(input_path, "r", encoding="utf-8", newline="") as f:
         for chunk in iter(lambda: f.read(READ_CHUNK_SIZE), ""):
             if not chunk:
                 break
@@ -186,7 +183,7 @@ def compress_to_file(
     out_data = bytearray()
     processed = 0
 
-    with open(input_path, "r", encoding="utf-8") as f:
+    with open(input_path, "r", encoding="utf-8", newline="") as f:
         for chunk in iter(lambda: f.read(READ_CHUNK_SIZE), ""):
             if not chunk:
                 break
@@ -227,17 +224,8 @@ def compress_to_file(
 
 
 # Mã hóa LZ77 cho bytes trong file -> ghi ra stream token.
-def _lz77_encode_to_stream(
-    src_path: str,
-    token_out,
-    freq_counter,
-    stats: Optional[Dict[str, int]] = None,
-    progress_callback: ProgressCallback = None,
-    *,
-    max_candidates: int = LZ_MAX_CANDIDATES,
-    max_match: int = LZ_MAX_MATCH,
-    window_size: int = LZ_WINDOW,
-    insert_step: int = 1,
+def _lz77_encode_to_stream(src_path: str, token_out, freq_counter, stats: Optional[Dict[str, int]] = None, progress_callback: ProgressCallback = None,
+    *, max_candidates: int = LZ_MAX_CANDIDATES, max_match: int = LZ_MAX_MATCH, window_size: int = LZ_WINDOW, insert_step: int = 1,
 ) -> int:
     file_size = os.path.getsize(src_path)
     if file_size == 0:
@@ -384,7 +372,6 @@ class _BitWriter:
         self.total_bits = 0
         self._out_buf = bytearray()
 
-    # Flush buffer byte ra file.
     def _flush_out(self) -> None:
         if self._out_buf:
             self.f.write(self._out_buf)
@@ -423,11 +410,7 @@ class _BitWriter:
 
 
 # Nén file token bytes bằng Huffman-over-bytes, ghi thẳng ra out_f.
-def _compress_token_file_huffman_bytes(
-    token_path: str,
-    out_f,
-    freq_table: Dict[int, int],
-    progress_callback: ProgressCallback = None,
+def _compress_token_file_huffman_bytes(token_path: str, out_f, freq_table: Dict[int, int], progress_callback: ProgressCallback = None,
 ) -> int:
     root = _build_btree(freq_table)
     codes = _build_bcodes(root)
@@ -463,8 +446,7 @@ compress_pure_huffman = compress_to_file
 
 
 # Nén theo  LZ77 + Huffman
-def compress_huffman_lz77(input_path: str, output_path: str, progress_callback: ProgressCallback = None, *,
-fast: bool = False,
+def compress_huffman_lz77(input_path: str, output_path: str, progress_callback: ProgressCallback = None, *, fast: bool = False,
 ) -> Tuple[Dict[str, int], Dict[str, str]]:
     src_size = os.path.getsize(input_path)
 
@@ -570,9 +552,7 @@ def _byte_to_label(b: int) -> str:
     return f"0x{b:02X}"
 
 
-def export_huffman_tree_pdf(freq_table: Dict, pdf_path: str, *,
-    codes: Optional[Dict] = None,
-    title: Optional[str] = None,
+def export_huffman_tree_pdf(freq_table: Dict, pdf_path: str, *, codes: Optional[Dict] = None, title: Optional[str] = None,
 ) -> None:
     try:
         import matplotlib
@@ -642,7 +622,9 @@ def export_huffman_tree_pdf(freq_table: Dict, pdf_path: str, *,
         n for n in nodes.values() if getattr(n, "sym") is not None
     ]
     hide_codes = len(leaf_nodes) > 80
-
+    swap_bits_for_display = True
+    _bit_swap_table = str.maketrans("01", "10")
+    
     max_code_chars = 28
 
     def _short_code(code: str) -> str:
@@ -660,11 +642,15 @@ def export_huffman_tree_pdf(freq_table: Dict, pdf_path: str, *,
             if hide_codes:
                 return f"{sym_label}\n{freq}".strip()
             code = _short_code(codes.get(sym, "")) if codes else ""
+            if swap_bits_for_display and code:
+                code = code.translate(_bit_swap_table)
             return f"{sym_label}\n{freq}\n{code}".strip()
         sym_label = _sym_to_label(str(sym))
         if hide_codes:
             return f"{sym_label}\n{freq}".strip()
         code = _short_code(codes.get(sym, "")) if codes else ""
+        if swap_bits_for_display and code:
+            code = code.translate(_bit_swap_table)
         return f"{sym_label}\n{freq}\n{code}".strip()
 
     labels: Dict[int, str] = {nid: node_label(nobj) for nid, nobj in nodes.items()}
@@ -683,8 +669,10 @@ def export_huffman_tree_pdf(freq_table: Dict, pdf_path: str, *,
     scaled_positions: Dict[int, Tuple[float, float]] = {}
     xs = []
     ys = []
+    max_x_raw = float(leaf_count - 1) if leaf_count > 0 else 0.0
+
     for nid, (x, y) in positions.items():
-        sx = x * x_step
+        sx = (max_x_raw - x) * x_step
         sy = y * y_step
         scaled_positions[nid] = (sx, sy)
         xs.append(sx)
@@ -709,7 +697,8 @@ def export_huffman_tree_pdf(freq_table: Dict, pdf_path: str, *,
         ax.plot([x1, x2], [y1, y2], color="#64748b", linewidth=1)
         mx = (x1 + x2) / 2
         my = (y1 + y2) / 2
-        ax.text(mx, my, bit, fontsize=max(7, font_size - 1), color="#334155", ha="center", va="center")
+        bit_label = ("0" if bit == "1" else "1") if swap_bits_for_display else bit
+        ax.text(mx, my, bit_label, fontsize=max(7, font_size - 1), color="#334155", ha="center", va="center")
 
     for node_id, (x, y) in scaled_positions.items():
         node_obj = nodes.get(node_id)
