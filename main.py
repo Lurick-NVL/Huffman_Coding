@@ -637,7 +637,7 @@ class HuffmanApp(tk.Tk):
 
         self.update_idletasks()
 
-    # Xử lý nén Huffman thuần.
+    # Xử lý nén Huffman.
     def handle_compress_pure(self) -> None:
         src = self.compress_input_var.get()
         dst = self.compress_output_var.get()
@@ -654,7 +654,7 @@ class HuffmanApp(tk.Tk):
             return
         if self.progress is not None:
             self.progress.config(mode="determinate", maximum=100, value=0)
-        self.set_busy(True, "Đang nén file (Huffman thuần), vui lòng chờ 0%...")
+        self.set_busy(True, "Đang nén file (Huffman), vui lòng chờ 0%...")
 
         def worker() -> None:
             try:
@@ -669,7 +669,7 @@ class HuffmanApp(tk.Tk):
                         if self.progress is not None:
                             self.progress["value"] = percent
                         self.progress_percent_var.set(f"{percent}%")
-                        self.status_var.set(f"Đang nén file (Huffman thuần), vui lòng chờ {percent}%...")
+                        self.status_var.set(f"Đang nén file (Huffman), vui lòng chờ {percent}%...")
 
                     self.after(0, ui_update)
 
@@ -722,7 +722,7 @@ class HuffmanApp(tk.Tk):
                     self.progress_percent_var.set("100%")
                     self.set_busy(False, "Nén xong.")
 
-                    msg = f"Đã nén file (Huffman thuần):\n{src}\n=>\n{dst}"
+                    msg = f"Đã nén file (Huffman):\n{src}\n=>\n{dst}"
                     if pdf_path:
                         msg += f"\n\nCây Huffman (PDF):\n{pdf_path}"
                     messagebox.showinfo(
@@ -1055,5 +1055,4 @@ class HuffmanApp(tk.Tk):
 if __name__ == "__main__":
     app = HuffmanApp()
     app.mainloop()
-
 
