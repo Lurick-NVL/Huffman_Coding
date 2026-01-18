@@ -369,7 +369,7 @@ class HuffmanApp(tk.Tk):
         
         self.compress_button = ttk.Button(
             button_frame,
-            text="Nén Huffman thuần",
+            text="Nén Huffman",
             command=self.handle_compress_pure,
             width=20,
             style="Ghost.TButton",
@@ -1055,4 +1055,5 @@ class HuffmanApp(tk.Tk):
 if __name__ == "__main__":
     app = HuffmanApp()
     app.mainloop()
+
 
